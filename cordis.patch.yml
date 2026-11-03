@@ -1,0 +1,4 @@
+# 插件分类：给「插件」页里自己安装的插件分组。
+- insert:
+    - id: dsh-plugin-categories
+      name: '@local/dsh-plugin-categories'

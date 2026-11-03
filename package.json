@@ -1,0 +1,31 @@
+{
+  "name": "@local/dsh-plugin-categories",
+  "version": "1.1.0",
+  "icon": "./icon.svg",
+  "private": true,
+  "type": "module",
+  "description": "Custom categories for the packages you installed on the Plugins page.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
