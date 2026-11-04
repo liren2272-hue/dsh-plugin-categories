@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-plugin-categories",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "icon": "./icon.svg",
   "private": true,
   "type": "module",
