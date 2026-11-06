@@ -12,7 +12,8 @@
  *     "categories": [
  *       { "id": "...", "name": "自己写的", "collapsed": false, "packages": ["@local/dsh-api-rules"] }
  *     ],
- *     "uncategorizedCollapsed": false
+ *     "uncategorizedCollapsed": false,
+ *     "collapsedGroups": { "basic": false, "extensions": true }
  *   }
  *
  * One package belongs to exactly one category; the first claim wins. A payload
@@ -62,7 +63,13 @@ function statePath(env = process.env) {
 }
 
 function emptyState() {
-  return { version: SCHEMA_VERSION, categories: [], uncategorizedCollapsed: false }
+  return {
+    version: SCHEMA_VERSION,
+    categories: [],
+    uncategorizedCollapsed: false,
+    // 整组折叠：官方「内置」「实验性」两组各一个独立开关，与分类无关。
+    collapsedGroups: {},
+  }
 }
 
 function clampName(value) {
@@ -82,6 +89,12 @@ export function normalize(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return out
   if (raw.version !== SCHEMA_VERSION) return out
   if (raw.uncategorizedCollapsed === true) out.uncategorizedCollapsed = true
+  // 整组折叠标志：按组 id 各存一个布尔，缺省 false。
+  if (raw.collapsedGroups !== null && typeof raw.collapsedGroups === 'object' && !Array.isArray(raw.collapsedGroups)) {
+    for (const key of ['basic', 'extensions']) {
+      if (raw.collapsedGroups[key] === true) out.collapsedGroups[key] = true
+    }
+  }
   const list = Array.isArray(raw.categories) ? raw.categories : []
   const usedIds = new Set()
   for (const entry of list) {

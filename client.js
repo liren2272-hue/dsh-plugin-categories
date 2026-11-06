@@ -44,6 +44,8 @@ window.__ModuleLoader__.load({
           assign: 'data-dshpc-assign',
           sig: 'data-dshpc-sig',
           editor: 'data-dshpc-editor',
+          /** 整组折叠开关（basic / extensions 用，独立于分类体系）。 */
+          groupToggle: 'data-dshpc-group-toggle',
         }
 
         // ----------------------------------------------------------------
@@ -72,6 +74,8 @@ window.__ModuleLoader__.load({
           expandHint: '展开这个分类',
           collapseHint: '收起这个分类',
           arrangingHint: '整理时分类保持展开',
+          expandGroup: '展开这组插件',
+          collapseGroup: '收起这组插件',
         }
         const en = {
           panelTitle: 'Plugin categories',
@@ -96,6 +100,8 @@ window.__ModuleLoader__.load({
           expandHint: 'Expand this category',
           collapseHint: 'Collapse this category',
           arrangingHint: 'Categories stay open while arranging',
+          expandGroup: 'Expand this group',
+          collapseGroup: 'Collapse this group',
         }
         const lang = String(document.documentElement.getAttribute('lang') ?? navigator.language ?? 'zh')
         const t = /^en/iu.test(lang) ? en : zh
@@ -134,7 +140,13 @@ window.__ModuleLoader__.load({
         }
 
         function emptyState() {
-          return { version: SCHEMA_VERSION, categories: [], uncategorizedCollapsed: false }
+          return {
+            version: SCHEMA_VERSION,
+            categories: [],
+            uncategorizedCollapsed: false,
+            // 整组折叠：官方的「内置」「实验性」两组各一个独立开关，与分类体系无关。
+            collapsedGroups: {},
+          }
         }
 
         function clampName(value) {
@@ -156,6 +168,12 @@ window.__ModuleLoader__.load({
           // yet", exactly like the host half does, instead of being guessed at.
           if (raw.version !== SCHEMA_VERSION) return out
           if (raw.uncategorizedCollapsed === true) out.uncategorizedCollapsed = true
+          // 整组折叠标志：按组 id 各存一个布尔，缺省 false。
+          if (raw.collapsedGroups !== null && typeof raw.collapsedGroups === 'object' && !Array.isArray(raw.collapsedGroups)) {
+            for (const key of ['basic', 'extensions']) {
+              if (raw.collapsedGroups[key] === true) out.collapsedGroups[key] = true
+            }
+          }
           const list = Array.isArray(raw.categories) ? raw.categories : []
           const usedIds = new Set()
           for (const entry of list) {
@@ -381,6 +399,12 @@ window.__ModuleLoader__.load({
 .dshpc-head:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,#4a90ff);outline-offset:1px}
 .dshpc-chevron{display:inline-flex;flex:none;opacity:.75;transition:transform .16s ease}
 .dshpc-head[aria-expanded="true"] .dshpc-chevron{transform:rotate(90deg)}
+/* 整组折叠开关（basic / extensions 组头），复用分类头箭头的观感。 */
+.dshpc-group-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:20px;height:20px;margin-right:2px;padding:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;opacity:.75;cursor:pointer;transition:transform .16s ease,opacity .12s ease,background .12s ease}
+.dshpc-group-toggle:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover,rgba(120,120,120,.12))}
+.dshpc-group-toggle:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,#4a90ff);outline-offset:1px;opacity:1}
+.dshpc-group-toggle[aria-expanded="true"]{transform:rotate(90deg)}
+.dshpc-group-toggle[aria-expanded="false"]{transform:rotate(0deg)}
 .dshpc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
 .dshpc-count{color:var(--dsw-alias-label-tertiary,#999);font-weight:400;font-variant-numeric:tabular-nums}
 .dshpc-manage{flex:none;display:inline-flex;align-items:center;gap:4px;margin:0;padding:2px 8px;border:0;background:transparent;border-radius:var(--dsw-radius-sm,6px);color:color-mix(in srgb,var(--dsw-alias-label-secondary,#6b6b6b) 70%,var(--dsw-alias-label-tertiary,#999));font:inherit;font-size:13px;font-weight:400;line-height:20px;cursor:pointer}
@@ -414,7 +438,7 @@ window.__ModuleLoader__.load({
 .dshpc-primary{background:var(--dsw-alias-state-business-primary,#3d6dfa);border-color:transparent;color:#fff}
 .dshpc-primary:hover{background:var(--dsw-alias-state-business-primary,#3d6dfa);filter:brightness(1.08)}
 .dshpc-button:focus-visible,.dshpc-icon:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,#4a90ff);outline-offset:1px}
-@media (prefers-reduced-motion:reduce){.dshpc-chevron{transition:none}}
+@media (prefers-reduced-motion:reduce){.dshpc-chevron,.dshpc-group-toggle{transition:none}}
 `
 
         function ensureStyle() {
@@ -459,6 +483,67 @@ window.__ModuleLoader__.load({
 
         function packageNameOf(card) {
           return card.getAttribute('data-plugin-package') ?? ''
+        }
+
+        /**
+         * 整组折叠：给 basic / extensions 两组的组标题各加一个独立开关。
+         * 折叠时隐藏该组的 <ul>，各组状态独立存储，互不影响；bundles 组
+         * 走分类体系，不在此处理。
+         */
+        function groupHead(section) {
+          return section.querySelector('[class*="_groupHead"]') ??
+            (section.firstElementChild instanceof HTMLElement ? section.firstElementChild : null)
+        }
+
+        function applyGroupCollapsed(section, collapsed) {
+          const list = cardList(section)
+          if (list !== null) {
+            if (collapsed) {
+              if (list.style.display !== 'none') list.style.display = 'none'
+            } else if (list.style.display === 'none') {
+              list.style.removeProperty('display')
+            }
+          }
+          const head = groupHead(section)
+          if (head === null) return
+          const toggle = head.querySelector(`[${ATTR.groupToggle}]`)
+          if (toggle === null) return
+          const expanded = !collapsed
+          if (toggle.getAttribute('aria-expanded') !== (expanded ? 'true' : 'false')) {
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+          }
+          toggle.classList.toggle('dshpc-group-collapsed', collapsed)
+          const label = collapsed ? t.expandGroup : t.collapseGroup
+          if (toggle.title !== label) toggle.title = label
+        }
+
+        function toggleGroupCollapsed(groupId) {
+          const next = state.collapsedGroups[groupId] !== true
+          if (next) state.collapsedGroups[groupId] = true
+          else delete state.collapsedGroups[groupId]
+          persist()
+          scheduleSync()
+        }
+
+        function mountGroupCollapse(section, groupId) {
+          const head = groupHead(section)
+          if (head === null) return
+          let toggle = head.querySelector(`[${ATTR.groupToggle}]`)
+          if (toggle === null) {
+            toggle = document.createElement('button')
+            toggle.type = 'button'
+            toggle.className = 'dshpc-group-toggle'
+            toggle.setAttribute(ATTR.groupToggle, '')
+            toggle.setAttribute('aria-expanded', 'true')
+            toggle.innerHTML =
+              '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>'
+            toggle.addEventListener('click', (event) => {
+              event.stopPropagation()
+              toggleGroupCollapsed(groupId)
+            })
+            // 放在组标题的最前，跟分类头里的折叠箭头观感一致。
+            head.insertBefore(toggle, head.firstChild)
+          }
         }
 
         function cardHeadOf(card) {
@@ -688,6 +773,17 @@ window.__ModuleLoader__.load({
         }
 
         function syncInner() {
+          ensureStyle()
+
+          // 整组折叠：官方 basic / extensions 两组各挂一个独立的折叠开关，
+          // 与下方的分类体系完全无关；点哪组就只动哪组。
+          for (const groupId of ['basic', 'extensions']) {
+            const section = document.querySelector(`section[data-plugin-group="${groupId}"]`)
+            if (section === null) continue
+            mountGroupCollapse(section, groupId)
+            applyGroupCollapsed(section, state.collapsedGroups[groupId] === true)
+          }
+
           const section = groupSection()
           if (section === null) {
             stripInjected()
@@ -700,7 +796,6 @@ window.__ModuleLoader__.load({
           }
           // With no category left there is nothing to file into, so a mode that
           // was left on must not silently come back when one is created again.
-          ensureStyle()
           // The editor is the only way to create the first category, so it has
           // to be reachable before any category exists.
           mountEditButton(section)
@@ -776,6 +871,7 @@ window.__ModuleLoader__.load({
           for (const node of Array.from(document.querySelectorAll(`[${ATTR.manage}]`))) node.remove()
           for (const node of Array.from(document.querySelectorAll(`[${ATTR.editor}]`))) node.remove()
           for (const node of Array.from(document.querySelectorAll(`[${ATTR.assign}]`))) node.remove()
+          for (const node of Array.from(document.querySelectorAll(`[${ATTR.groupToggle}]`))) node.remove()
           for (const card of Array.from(document.querySelectorAll('li[data-plugin-package]'))) {
             if (card.style.order !== '') card.style.removeProperty('order')
             if (card.style.display === 'none') card.style.removeProperty('display')
