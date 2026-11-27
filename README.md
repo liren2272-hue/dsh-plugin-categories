@@ -47,3 +47,12 @@ Client 半同时留一份 `localStorage` 副本，Host 路由不可用时界面�
 | `client.js` | Client 半：分组渲染、编辑模式与分类编辑器、卡片下拉框 |
 | `cordis.patch.yml` | bundle 补丁 |
 | `locale/{zh,en}.json` | 插件页显示的名称与描述 |
+
+## 三合一（v1.2.0）
+
+本插件现已合并另外两个纯界面插件，安装/停用这一张卡片即可一并控制：
+
+- **上下文推荐卡隐藏**（原 `@local/dsh-context-recom-hider`）：隐藏「上下文」页顶部的「感谢 / Thanks」推荐卡；
+- **README 位置调整**（原 `@local/dsh-readme-below-versions`）：把包说明文档显示到「更新 / 版本」下方。
+
+三种行为都在同一模块里注册，停用本插件会一起撤销。

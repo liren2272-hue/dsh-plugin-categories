@@ -1,25 +1,33 @@
 /**
- * dsh-plugin-categories — client half.
+ * dsh-plugin-categories — merged client half.
  *
- * The Plugins page has no slot that can wrap or replace its "installed" list, so
- * this half works on the rendered DOM instead: the page already marks every
- * card with `li[data-plugin-package]` and every group with
- * `section[data-plugin-group]`. The "packages you installed" group is
- * `data-plugin-group="bundles"`.
+ * One bundle (single module id @local/dsh-plugin-categories) now provides three
+ * pure-client DOM decorations. Each was a standalone plugin; they are folded here
+ * so ONE card on the Plugins page installs/toggles all of them together, and the
+ * bundle's enable/disable tears all three down as a unit.
  *
- * What we add, without ever touching React's own nodes:
- *   - one collapsible header per named category, inserted into the group's
- *     card list and ordered with the CSS `order` property,
- *   - a small select inside every card that files that package under a category,
- *   - a "分类" button in the group head that opens the category editor.
+ *   1. categories  (@local/dsh-plugin-categories, the original) — custom category
+ *      headers + per-card pickers + inline edit mode on the Plugins page.
+ *   2. recom-hider (was @local/dsh-context-recom-hider) — hides the 感谢 / Thanks
+ *      recommendation card dsh-context draws at the top of its 上下文 tab.
+ *   3. readme-below (was @local/dsh-readme-below-versions) — paints a package's
+ *      README directly under the 更新 / 版本 block via flex `order`.
  *
- * The layout itself lives in the host half (a `webServer` route); this half only
- * reads and writes it, and keeps a browser copy so the UI still works when the
- * route is unavailable.
+ * All three only decorate the rendered DOM (inject: []) — none reads a service, so
+ * none can trip the Cordis "cannot get property … without inject" trap.
+ *
+ * Each original factory() body is kept VERBATIM inside its own IIFE below, so it
+ * still returns its own { inject, apply } module object in its own closure (no
+ * identifier collisions across the three). The unified factory invokes each
+ * sub-module's apply(ctx) and chains the returned disposers, so disabling this one
+ * bundle undoes every DOM change together.
  */
+
 window.__ModuleLoader__.load({
   id: '@local/dsh-plugin-categories',
   factory() {
+    // Each sub-module's original factory() body, run once inside its own IIFE.
+    const categories = (function () {
     return {
       inject: [],
       apply(ctx) {
@@ -1116,6 +1124,346 @@ window.__ModuleLoader__.load({
           document.getElementById(STYLE_ID)?.remove()
           void ctx
           void loaded
+        }
+      },
+    }
+    })()
+
+    const recomHider = (function () {
+    const STYLE_ID = 'dsh-context-recom-hider:style'
+    const CSS_TAG = 'dsh-context-recom-hider/recom.css'
+    const HIDDEN_ATTR = 'data-dsh-recom-hider'
+    const RECOM_CLASS = 'lc-recom'
+    const SCAN_INTERVAL_MS = 3000
+    
+    /** Only the recommendation card itself; never the sibling plugin-info card. */
+    const CSS = [
+      '/* dsh-context "感谢 / Thanks" recommendation card — hidden by @local/dsh-context-recom-hider */',
+      'a.lc-card.' + RECOM_CLASS + ',',
+      '.' + RECOM_CLASS + ' {',
+      '  display: none !important;',
+      '  visibility: hidden !important;',
+      '  height: 0 !important;',
+      '  min-height: 0 !important;',
+      '  margin: 0 !important;',
+      '  padding: 0 !important;',
+      '  border: 0 !important;',
+      '  overflow: hidden !important;',
+      '}',
+      '',
+    ].join('\n')
+
+    /** @type {MutationObserver | null} */
+    let observer = null
+    let scanTimer = null
+    let disposed = false
+    let styleEl = null
+
+    function installStyle() {
+      if (typeof document === 'undefined') return
+      const existing = document.getElementById(STYLE_ID)
+      if (existing !== null) {
+        styleEl = existing
+        return
+      }
+      const tag = document.createElement('style')
+      tag.id = STYLE_ID
+      tag.setAttribute('data-plugin-css', CSS_TAG)
+      tag.textContent = CSS
+      ;(document.head || document.documentElement).appendChild(tag)
+      styleEl = tag
+    }
+
+    /** Force-hide one card and remember that we touched it. */
+    function hideCard(el) {
+      if (!el || el.nodeType !== 1) return
+      if (el.getAttribute(HIDDEN_ATTR) === 'true') return
+      el.setAttribute(HIDDEN_ATTR, 'true')
+      if (el.style && typeof el.style.setProperty === 'function') {
+        el.style.setProperty('display', 'none', 'important')
+      }
+    }
+
+    /**
+     * Sweep the current DOM. Cheap enough to run on every mutation batch: the
+     * query is a single class selector and already-hidden nodes short-circuit.
+     */
+    function sweep() {
+      if (disposed || typeof document === 'undefined') return
+      const nodes = document.querySelectorAll('.' + RECOM_CLASS)
+      for (const el of nodes) hideCard(el)
+    }
+
+    let pending = false
+    function scheduleSweep() {
+      if (disposed || pending) return
+      pending = true
+      const run = () => {
+        pending = false
+        sweep()
+      }
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
+      else setTimeout(run, 0)
+    }
+
+    function startObserver() {
+      if (typeof MutationObserver !== 'function') return
+      observer = new MutationObserver(scheduleSweep)
+      observer.observe(document.documentElement, { childList: true, subtree: true })
+    }
+
+    /** Undo every inline override we made, so disabling restores the card. */
+    function restoreCards() {
+      if (typeof document === 'undefined') return
+      for (const el of document.querySelectorAll('[' + HIDDEN_ATTR + ']')) {
+        el.removeAttribute(HIDDEN_ATTR)
+        if (el.style && typeof el.style.removeProperty === 'function') {
+          el.style.removeProperty('display')
+        }
+      }
+    }
+
+    function apply(ctx) {
+      if (typeof document === 'undefined') return
+      installStyle()
+      sweep()
+      startObserver()
+      // Safety net for a re-render that swaps the card without a childList
+      // change we can observe (or a page restored from the bfcache).
+      scanTimer = setInterval(sweep, SCAN_INTERVAL_MS)
+
+      return () => {
+        disposed = true
+        if (observer !== null) {
+          observer.disconnect()
+          observer = null
+        }
+        if (scanTimer !== null) {
+          clearInterval(scanTimer)
+          scanTimer = null
+        }
+        restoreCards()
+        if (styleEl !== null && styleEl.parentNode !== null) {
+          styleEl.parentNode.removeChild(styleEl)
+        }
+        styleEl = null
+        void ctx
+      }
+    }
+
+    return {
+      // Pure DOM decoration: no service reads at all, so nothing can trip the
+      // Cordis "cannot get property … without inject" trap.
+      inject: [],
+      apply,
+      /** Exposed for the offline test harness only; nothing in DSH reads this. */
+      internals: { STYLE_ID, CSS_TAG, CSS, HIDDEN_ATTR, RECOM_CLASS, sweep, restoreCards },
+    }
+    })()
+
+    const readmeBelow = (function () {
+    const FLAG = 'data-dsh-readme-below-versions'
+    const SCAN_INTERVAL_MS = 3000
+    const PAGE_SELECTOR = '[data-plugin-detail]'
+    const VERSION_SELECTOR = '[data-plugin-versions]'
+    /**
+     * Every `detailSections` child the plugin manager renders itself. The README is
+     * the one that carries none of them, so this set is also the README's absence
+     * test: a page whose first child is marked has no document to move.
+     */
+    const SECTION_MARKERS = [
+      'data-plugin-config',
+      'data-plugin-rows',
+      'data-plugin-versions',
+      'data-plugin-source',
+    ]
+    /** Selector matching any of the page's own section blocks. */
+    const SECTION_SELECTOR = SECTION_MARKERS.map((marker) => `[${marker}]`).join(',')
+    /** The README paints right below the versions block; what followed it moves one slot down. */
+    const README_ORDER = '1'
+    const TAIL_ORDER = '2'
+  
+    /** Whether a `detailSections` child is one of the page's own sections rather than the README. */
+    function isSection(el) {
+      return SECTION_MARKERS.some((marker) => el.hasAttribute(marker))
+    }
+  
+    /**
+     * The last section the plugin manager renders itself on a detail page —
+     * `data-plugin-source` (来源) is last for a local package, since the versions
+     * block is absent. Used as the reorder anchor when no `[data-plugin-versions]`
+     * block exists.
+     */
+    function lastPageSection(children) {
+      for (let i = children.length - 1; i >= 0; i -= 1) {
+        if (isSection(children[i])) return children[i]
+      }
+      return null
+    }
+  
+    /**
+     * Which flex children need which `order`, given a page's `detailSections`
+     * children and its versions block. Pure: it reads elements, never writes them.
+     *
+     * The anchor is the versions block when present; when absent (a local package
+     * with no update block) it falls back to the last page section that exists,
+     * so the README still paints below the page's own sections.
+     *
+     * @param children - the container's element children, in DOM order.
+     * @param version - the `[data-plugin-versions]` block on the same page, or null.
+     * @returns the pairs to apply; empty when the page has no README, no anchor
+     *   section, or already shows the README below the anchor.
+     */
+    function planReorder(children, version) {
+      if (children.length === 0) return []
+      const readme = children[0]
+      // No document on this page: the first child is one of the page's own blocks.
+      if (readme === version || isSection(readme)) return []
+      const anchor = version !== null && version !== undefined ? version : lastPageSection(children)
+      if (anchor === null || anchor === undefined) return []
+      const readmeAt = children.indexOf(readme)
+      const anchorAt = children.indexOf(anchor)
+      // Not the same container, or already below the anchor section.
+      if (readmeAt < 0 || anchorAt < 0 || readmeAt > anchorAt) return []
+      const plan = [{ el: readme, order: README_ORDER }]
+      for (let i = anchorAt + 1; i < children.length; i += 1) {
+        plan.push({ el: children[i], order: TAIL_ORDER })
+      }
+      return plan
+    }
+  
+    /** Write one `order`, remembering on the element that we did, for teardown. */
+    function applyOrder(el, order) {
+      if (el.getAttribute(FLAG) === order) return
+      el.setAttribute(FLAG, order)
+      if (el.style && typeof el.style.setProperty === 'function') el.style.setProperty('order', order)
+    }
+
+      /** @type {MutationObserver | null} */
+      let observer = null
+      let scanTimer = null
+      let disposed = false
+      let pending = false
+
+      /**
+       * The `.detailSections` container of a detail page. It is the parent of the
+       * page's own section blocks (and of the README); since the README carries no
+       * marker, we locate it as the parent of the first section block found.
+       */
+      function resolveContainer(page) {
+        const section = page.querySelector(SECTION_SELECTOR)
+        return section === null ? null : section.parentElement
+      }
+
+      /** Re-assert the order on every package page currently open. */
+      function sweep() {
+        if (disposed || typeof document === 'undefined') return
+        for (const page of document.querySelectorAll(PAGE_SELECTOR)) {
+          const version = page.querySelector(VERSION_SELECTOR)
+          const container = version === null ? resolveContainer(page) : version.parentElement
+          if (container === null) continue
+          for (const { el, order } of planReorder(Array.from(container.children), version)) {
+            applyOrder(el, order)
+          }
+        }
+      }
+
+      let scheduled = false
+      function scheduleSweep() {
+        if (disposed || scheduled) return
+        scheduled = true
+        const run = () => {
+          scheduled = false
+          sweep()
+        }
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
+        else setTimeout(run, 0)
+        void pending
+      }
+
+      /** Undo every inline override we made, so disabling the bundle restores the page. */
+      function restore() {
+        if (typeof document === 'undefined') return
+        for (const el of document.querySelectorAll(`[${FLAG}]`)) {
+          el.removeAttribute(FLAG)
+          if (el.style && typeof el.style.removeProperty === 'function') el.style.removeProperty('order')
+        }
+      }
+
+      function apply(ctx) {
+        if (typeof document === 'undefined') return
+        sweep()
+        if (typeof MutationObserver === 'function') {
+          observer = new MutationObserver(scheduleSweep)
+          observer.observe(document.documentElement, { childList: true, subtree: true })
+        }
+        // Safety net for a re-render that swaps a page's blocks without a childList
+        // change we can observe, or for a document restored from the bfcache.
+        scanTimer = setInterval(sweep, SCAN_INTERVAL_MS)
+
+        return () => {
+          disposed = true
+          if (observer !== null) {
+            observer.disconnect()
+            observer = null
+          }
+          if (scanTimer !== null) {
+            clearInterval(scanTimer)
+            scanTimer = null
+          }
+          restore()
+          void ctx
+        }
+      }
+
+      return {
+        // Pure DOM decoration: no service reads at all, so nothing can trip the
+        // Cordis "cannot get property … without inject" trap.
+        inject: [],
+        apply,
+        /** Exposed for the offline test harness only; nothing in DSH reads this. */
+        internals: {
+          FLAG,
+          PAGE_SELECTOR,
+          VERSION_SELECTOR,
+          SECTION_MARKERS,
+          SECTION_SELECTOR,
+          README_ORDER,
+          TAIL_ORDER,
+          isSection,
+          lastPageSection,
+          planReorder,
+          applyOrder,
+          restore,
+          sweep,
+        },
+      }
+    })()
+
+    return {
+      inject: [],
+      apply(ctx) {
+        const disposers = []
+        for (const mod of [categories, recomHider, readmeBelow]) {
+          // Fault tolerance: a sub-module may throw when its host page or
+          // section is absent (e.g. recomHider when the dsh-context plugin
+          // is disabled or its recommendation card never renders). One
+          // failure must not abort the other sub-modules or surface as a
+          // plugin-page error.
+          try {
+            const dispose = mod.apply ? mod.apply(ctx) : undefined
+            if (typeof dispose === 'function') disposers.push(dispose)
+          } catch (error) {
+            console.warn('[dsh-plugin-categories] sub-module apply failed; skipping', error)
+          }
+        }
+        return () => {
+          for (const dispose of disposers) {
+            try { dispose() } catch (error) {
+              // One sub-module tearing down must not stop the others.
+              console.warn('[dsh-plugin-categories] dispose failed', error)
+            }
+          }
         }
       },
     }
